@@ -25,6 +25,7 @@ from send2trash import send2trash
 from .patterns import (
     IS_MACOS,
     IS_WINDOWS,
+    contains_protected_path,
     is_allowed_cleanup_command,
     is_system_protected,
     is_user_data,
@@ -210,7 +211,7 @@ def get_archive_dir(drive: Path) -> Path:
 def is_safe_to_remove(path: Path) -> bool:
     """Verify a path may be removed from the Mac."""
     resolved = path.resolve()
-    if is_system_protected(resolved):
+    if is_system_protected(resolved) or contains_protected_path(resolved):
         return False
     if IS_MACOS:
         # External drives are write-only targets — never delete from them.

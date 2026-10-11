@@ -281,19 +281,37 @@ def _system_protected_prefixes() -> list[Path]:
     return prefixes
 
 
+def fold_path_case(path: Path | str) -> str:
+    """Path string normalized for comparison.
+
+    macOS and Windows filesystems ignore case, so `~/.SSH` is the same folder as
+    `~/.ssh`; compare case-folded there or a respelled path slips past the rules.
+    """
+    s = str(path)
+    return s.casefold() if IS_MACOS or IS_WINDOWS else s
+
+
 SYSTEM_PROTECTED_PREFIXES: list[Path] = _system_protected_prefixes()
 _PROTECTED_PREFIX_STRS: tuple[str, ...] = tuple(
-    str(p) + os.sep for p in SYSTEM_PROTECTED_PREFIXES
+    fold_path_case(p) + os.sep for p in SYSTEM_PROTECTED_PREFIXES
 )
-_PROTECTED_EXACT_STRS: frozenset[str] = frozenset(str(p) for p in SYSTEM_PROTECTED_PREFIXES)
+_PROTECTED_EXACT_STRS: frozenset[str] = frozenset(
+    fold_path_case(p) for p in SYSTEM_PROTECTED_PREFIXES
+)
 
 USER_DATA_DIRS: frozenset[Path] = frozenset(
     HOME / d for d in ("Documents", "Desktop", "Pictures", "Music", "Movies", "Downloads")
 )
-_USER_DATA_PREFIX_STRS: tuple[str, ...] = tuple(str(p) + os.sep for p in USER_DATA_DIRS)
-_USER_DATA_EXACT_STRS: frozenset[str] = frozenset(str(p) for p in USER_DATA_DIRS)
+_USER_DATA_PREFIX_STRS: tuple[str, ...] = tuple(fold_path_case(p) + os.sep for p in USER_DATA_DIRS)
+_USER_DATA_EXACT_STRS: frozenset[str] = frozenset(fold_path_case(p) for p in USER_DATA_DIRS)
 
-PROTECTED_FILENAMES = {".DS_Store"}
+# Removing a folder removes everything in it, so the home folder, user data
+# folders, and every parent of a Tier 1 path are guarded as a whole.
+_CONTAINER_GUARDED_STRS: tuple[str, ...] = tuple(
+    fold_path_case(p) for p in (HOME, *USER_DATA_DIRS, *SYSTEM_PROTECTED_PREFIXES)
+)
+
+PROTECTED_FILENAMES = {fold_path_case(".DS_Store")}
 PROTECTED_SUFFIXES = (".plist",)
 
 # Paths carrying a personal identifier (e.g. GoogleDrive-user@example.com mounts)
@@ -307,32 +325,43 @@ PROTECTED_BUNDLE_SUFFIXES: tuple[str, ...] = (
     ".fcpbundle",
 )
 _PROTECTED_BUNDLE_MARKERS: tuple[str, ...] = tuple(
-    s + os.sep for s in PROTECTED_BUNDLE_SUFFIXES
+    fold_path_case(s) + os.sep for s in PROTECTED_BUNDLE_SUFFIXES
 )
-_RUNTIME_MARKERS = tuple(os.sep + d + os.sep for d in RUNTIME_DIR_NAMES)
+_RUNTIME_MARKERS = tuple(os.sep + fold_path_case(d) + os.sep for d in RUNTIME_DIR_NAMES)
 
 
 def is_system_protected(path: Path | str) -> bool:
     """Tier 1: must never be deleted or suggested, no exceptions."""
-    s = str(path)
+    s = fold_path_case(path)
     if s in _PROTECTED_EXACT_STRS or s.startswith(_PROTECTED_PREFIX_STRS):
         return True
     p = Path(s)
     if p.name in PROTECTED_FILENAMES or p.suffix in PROTECTED_SUFFIXES:
         return True
     # Inside an application or photo/media library bundle, or is one
-    if any(m in s for m in _PROTECTED_BUNDLE_MARKERS) or any(s.endswith(sfx) for sfx in PROTECTED_BUNDLE_SUFFIXES):
+    if any(m in s for m in _PROTECTED_BUNDLE_MARKERS) or any(s.endswith(fold_path_case(sfx)) for sfx in PROTECTED_BUNDLE_SUFFIXES):
         return True
     # Inside an active VM runtime dir
-    if any(m in s for m in _RUNTIME_MARKERS) or p.name in RUNTIME_DIR_NAMES:
+    if any(m in s for m in _RUNTIME_MARKERS) or p.name in {fold_path_case(d) for d in RUNTIME_DIR_NAMES}:
         return True
     return False
+
+
+def contains_protected_path(path: Path | str) -> bool:
+    """True if `path` is the home folder, a user data folder, or a parent of a Tier 1 path.
+
+    Deleting such a folder would take protected content with it.
+    """
+    s = fold_path_case(path).rstrip(os.sep)
+    if not s or s.endswith(":"):  # filesystem root ("/" or "C:\\")
+        return True
+    return any(g == s or g.startswith(s + os.sep) for g in _CONTAINER_GUARDED_STRS)
 
 
 
 def is_user_data(path: Path | str) -> bool:
     """Tier 2: personal files — only removable on explicit user action."""
-    s = str(path)
+    s = fold_path_case(path)
     return s in _USER_DATA_EXACT_STRS or s.startswith(_USER_DATA_PREFIX_STRS)
 
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
@@ -66,7 +67,7 @@ class TidyCopilot:
 
     def _render_plan(self, plan_data: dict[str, Any]) -> bool:
         """Render a proposed cleanup plan in a Rich table and prompt user for confirmation."""
-        title = plan_data.get("title", "Proposed Cleanup Plan")
+        title = escape(str(plan_data.get("title", "Proposed Cleanup Plan")))
         items = plan_data.get("items", [])
         total_human = plan_data.get("total_human", "0 B")
         blocked = plan_data.get("blocked_count", 0)
@@ -104,7 +105,8 @@ class TidyCopilot:
                 elif item.get("path"):
                     deletable_paths.append(Path(item["path"]))
 
-            table.add_row(str(i), item.get("category", "General"), display_target, sz, status)
+            # Category and target come from the model: escape so they can't inject Rich markup
+            table.add_row(str(i), escape(str(item.get("category", "General"))), escape(display_target), sz, status)
 
         self.console.print()
         self.console.print(table)

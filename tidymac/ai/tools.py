@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -12,7 +13,13 @@ from ..cleaner import (
     remove_files,
     run_cleanup_command,
 )
-from ..patterns import is_allowed_cleanup_command, is_system_protected, is_user_data
+from ..patterns import (
+    contains_protected_path,
+    fold_path_case,
+    is_allowed_cleanup_command,
+    is_system_protected,
+    is_user_data,
+)
 from ..scanner import (
     format_size,
     get_disk_usage,
@@ -30,10 +37,13 @@ def is_path_excluded(path: Path | str) -> bool:
     try:
         from .config import load_ai_config
         cfg = load_ai_config()
-        p_str = str(Path(path).expanduser().resolve())
+        p_str = fold_path_case(Path(path).expanduser().resolve())
         for exc in cfg.excluded_paths:
-            exc_str = str(Path(exc).expanduser().resolve())
-            if p_str == exc_str or p_str.startswith(exc_str + "/") or p_str.startswith(exc_str + "\\"):
+            exc_str = fold_path_case(Path(exc).expanduser().resolve())
+            inside = p_str == exc_str or p_str.startswith(exc_str + os.sep)
+            # A parent of an excluded folder would delete the excluded folder with it
+            contains = exc_str.startswith(p_str.rstrip(os.sep) + os.sep)
+            if inside or contains:
                 return True
     except Exception:
         # Fail closed: if the exclusion list can't be checked, treat the path as protected.
@@ -283,21 +293,22 @@ def tool_scan_media(
 
     videos = [
         {"path": str(v.path), "size_bytes": v.size, "size_human": v.size_human(), "modified_days_ago": v.modified_days_ago}
-        for v in res.large_videos[:limit]
-    ]
+        for v in res.large_videos if not is_path_excluded(v.path)
+    ][:limit]
 
     screen_recs = [
         {"path": str(v.path), "size_bytes": v.size, "size_human": v.size_human(), "modified_days_ago": v.modified_days_ago}
-        for v in res.screen_recordings[:limit]
-    ]
+        for v in res.screen_recordings if not is_path_excluded(v.path)
+    ][:limit]
 
     screenshots = [
         {"path": str(s.path), "size_bytes": s.size, "size_human": s.size_human(), "modified_days_ago": s.modified_days_ago}
-        for s in res.screenshots[:limit]
-    ]
+        for s in res.screenshots if not is_path_excluded(s.path)
+    ][:limit]
 
     dupe_groups = []
-    for g in res.duplicate_groups[:limit]:
+    visible_groups = [g for g in res.duplicate_groups if not any(is_path_excluded(p) for p in g.files)]
+    for g in visible_groups[:limit]:
         dupe_groups.append({
             "hash": g.file_hash[:8],
             "file_size_human": format_size(g.size),
@@ -336,7 +347,7 @@ def tool_propose_cleanup_plan(
         reason = raw.get("reason", "Identified by AI analysis")
         cmd = raw.get("cleanup_command")
 
-        p = Path(p_str) if p_str else None
+        p = Path(p_str).expanduser().resolve() if p_str else None
 
         # Check safety guardrails
         is_prot = False
@@ -351,7 +362,7 @@ def tool_propose_cleanup_plan(
                 plan.blocked_count += 1
                 reason = "BLOCKED: Command is not one of tidymac's known package-manager cleanup commands."
         elif p:
-            if is_system_protected(p) or is_path_excluded(p):
+            if is_system_protected(p) or contains_protected_path(p) or is_path_excluded(p):
                 is_prot = True
                 safe = False
                 plan.blocked_count += 1
