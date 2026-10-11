@@ -22,7 +22,13 @@ from rich.prompt import Prompt
 
 from send2trash import send2trash
 
-from .patterns import IS_MACOS, IS_WINDOWS, is_system_protected, is_user_data
+from .patterns import (
+    IS_MACOS,
+    IS_WINDOWS,
+    is_allowed_cleanup_command,
+    is_system_protected,
+    is_user_data,
+)
 from .scanner import format_size
 
 console = Console()
@@ -511,6 +517,10 @@ def remove_files(
 def run_cleanup_command(command: str, console: Console | None = None) -> bool:
     """Run a package manager's own cleanup command (e.g. `npm cache clean`)."""
     import shlex
+    if not is_allowed_cleanup_command(command):
+        if console:
+            console.print(f"  [red]Refused to run `{command}`: not a known cleanup command[/red]")
+        return False
     try:
         result = subprocess.run(shlex.split(command), capture_output=True, text=True, timeout=600)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:

@@ -91,7 +91,11 @@ def save_ai_config(cfg: AIConfig, path: Path | None = None) -> Path:
     """Save configuration to disk."""
     cfg_path = path or _get_default_config_path()
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(json.dumps(asdict(cfg), indent=2), encoding="utf-8")
+    # The file holds API keys: create it owner-only, and tighten it if it already existed.
+    fd = os.open(cfg_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(asdict(cfg), indent=2))
+    os.chmod(cfg_path, 0o600)
     return cfg_path
 
 

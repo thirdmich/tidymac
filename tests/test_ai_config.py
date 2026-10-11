@@ -43,6 +43,12 @@ class TestAIConfig(unittest.TestCase):
         self.assertEqual(loaded.gemini_api_key, "test_key_123")
         self.assertEqual(loaded.gemini_model, "gemini-3.8-flash")
 
+    def test_saved_config_is_owner_only(self):
+        self.config_path.write_text("{}", encoding="utf-8")
+        os.chmod(self.config_path, 0o644)
+        save_ai_config(AIConfig(gemini_api_key="secret"), path=self.config_path)
+        self.assertEqual(self.config_path.stat().st_mode & 0o777, 0o600)
+
     def test_model_env_vars_override_config_file(self):
         save_ai_config(AIConfig(gemini_model="from-file"), path=self.config_path)
         overrides = {

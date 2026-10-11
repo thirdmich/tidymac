@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,6 +198,20 @@ def _windows_categories() -> list[ClutterCategory]:
 
 
 CLUTTER_CATEGORIES: list[ClutterCategory] = _get_clutter_categories()
+
+# Only commands tidymac itself defines may run. Matched on the exact argv so an
+# AI-proposed command can't append flags (e.g. `--prefix /`) to a known one.
+_ALLOWED_CLEANUP_ARGVS: frozenset[tuple[str, ...]] = frozenset(
+    tuple(shlex.split(c.cleanup_command)) for c in CLUTTER_CATEGORIES if c.cleanup_command
+)
+
+
+def is_allowed_cleanup_command(command: str) -> bool:
+    """True only if `command` is exactly one of the built-in package-manager cleanup commands."""
+    try:
+        return tuple(shlex.split(command)) in _ALLOWED_CLEANUP_ARGVS
+    except ValueError:
+        return False
 
 
 # --- Protection tiers ---

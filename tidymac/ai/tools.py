@@ -12,7 +12,7 @@ from ..cleaner import (
     remove_files,
     run_cleanup_command,
 )
-from ..patterns import is_system_protected, is_user_data
+from ..patterns import is_allowed_cleanup_command, is_system_protected, is_user_data
 from ..scanner import (
     format_size,
     get_disk_usage,
@@ -36,7 +36,8 @@ def is_path_excluded(path: Path | str) -> bool:
             if p_str == exc_str or p_str.startswith(exc_str + "/") or p_str.startswith(exc_str + "\\"):
                 return True
     except Exception:
-        pass
+        # Fail closed: if the exclusion list can't be checked, treat the path as protected.
+        return True
     return False
 
 
@@ -342,9 +343,13 @@ def tool_propose_cleanup_plan(
         safe = True
 
         if cmd:
-            # Package manager CLI command (safe, store-consistent)
-            plan.safe_bytes += size
-            safe = True
+            if is_allowed_cleanup_command(cmd):
+                plan.safe_bytes += size
+            else:
+                is_prot = True
+                safe = False
+                plan.blocked_count += 1
+                reason = "BLOCKED: Command is not one of tidymac's known package-manager cleanup commands."
         elif p:
             if is_system_protected(p) or is_path_excluded(p):
                 is_prot = True
