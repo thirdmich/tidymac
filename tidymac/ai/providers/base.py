@@ -12,6 +12,9 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
+    # Opaque token Gemini 3 attaches to a function call; it must be sent back
+    # unchanged with that call in the next request or the API rejects it.
+    thought_signature: str | None = None
 
 
 @dataclass

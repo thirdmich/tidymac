@@ -53,12 +53,15 @@ class GeminiProvider(BaseLLMProvider):
                 if m.content:
                     parts.append({"text": m.content})
                 for tc in m.tool_calls:
-                    parts.append({
+                    part: dict[str, Any] = {
                         "functionCall": {
                             "name": tc.name,
                             "args": tc.arguments,
                         }
-                    })
+                    }
+                    if tc.thought_signature:
+                        part["thoughtSignature"] = tc.thought_signature
+                    parts.append(part)
 
             if parts:
                 contents.append({"role": role, "parts": parts})
@@ -120,6 +123,7 @@ class GeminiProvider(BaseLLMProvider):
                         id=f"gemini_call_{i}",
                         name=fc.get("name", ""),
                         arguments=fc.get("args", {}),
+                        thought_signature=p.get("thoughtSignature"),
                     )
                 )
 
