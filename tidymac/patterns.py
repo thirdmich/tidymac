@@ -305,10 +305,25 @@ USER_DATA_DIRS: frozenset[Path] = frozenset(
 _USER_DATA_PREFIX_STRS: tuple[str, ...] = tuple(fold_path_case(p) + os.sep for p in USER_DATA_DIRS)
 _USER_DATA_EXACT_STRS: frozenset[str] = frozenset(fold_path_case(p) for p in USER_DATA_DIRS)
 
+# Folders macOS requires to exist (it guards them with a deny-delete ACL) but
+# whose contents are disposable. Cleanup empties them; the folder itself stays.
+CONTENTS_ONLY_DIRS: frozenset[Path] = (
+    frozenset({HOME / "Library/Caches", HOME / "Library/Logs"}) if IS_MACOS else frozenset()
+)
+_CONTENTS_ONLY_STRS: frozenset[str] = frozenset(fold_path_case(p) for p in CONTENTS_ONLY_DIRS)
+
+
+def is_contents_only_dir(path: Path | str) -> bool:
+    """True if `path` is a folder that may be emptied but never removed itself."""
+    return fold_path_case(path).rstrip(os.sep) in _CONTENTS_ONLY_STRS
+
+
 # Removing a folder removes everything in it, so the home folder, user data
-# folders, and every parent of a Tier 1 path are guarded as a whole.
+# folders, contents-only folders, and every parent of a Tier 1 path are
+# guarded as a whole.
 _CONTAINER_GUARDED_STRS: tuple[str, ...] = tuple(
-    fold_path_case(p) for p in (HOME, *USER_DATA_DIRS, *SYSTEM_PROTECTED_PREFIXES)
+    fold_path_case(p)
+    for p in (HOME, *USER_DATA_DIRS, *CONTENTS_ONLY_DIRS, *SYSTEM_PROTECTED_PREFIXES)
 )
 
 PROTECTED_FILENAMES = {fold_path_case(".DS_Store")}

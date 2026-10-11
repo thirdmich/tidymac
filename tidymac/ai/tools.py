@@ -17,6 +17,7 @@ from ..patterns import (
     contains_protected_path,
     fold_path_case,
     is_allowed_cleanup_command,
+    is_contents_only_dir,
     is_system_protected,
     is_user_data,
 )
@@ -61,6 +62,7 @@ class PlanItem:
     is_safe: bool = True
     cleanup_command: str | None = None
     is_protected: bool = False
+    contents_only: bool = False  # empty the folder; the folder itself stays
 
 
 @dataclass
@@ -89,6 +91,7 @@ class CleanupPlan:
                     "is_safe": it.is_safe,
                     "cleanup_command": it.cleanup_command,
                     "is_protected": it.is_protected,
+                    "contents_only": it.contents_only,
                 }
                 for it in self.items
             ],
@@ -352,6 +355,7 @@ def tool_propose_cleanup_plan(
         # Check safety guardrails
         is_prot = False
         safe = True
+        contents_only = False
 
         if cmd:
             if is_allowed_cleanup_command(cmd):
@@ -361,6 +365,11 @@ def tool_propose_cleanup_plan(
                 safe = False
                 plan.blocked_count += 1
                 reason = "BLOCKED: Command is not one of tidymac's known package-manager cleanup commands."
+        elif p and is_contents_only_dir(p) and not is_path_excluded(p):
+            # macOS forbids removing this folder itself; clean what's inside it.
+            contents_only = True
+            plan.safe_bytes += size
+            reason = f"{reason} (empties the folder; macOS requires the folder itself to stay)"
         elif p:
             if is_system_protected(p) or contains_protected_path(p) or is_path_excluded(p):
                 is_prot = True
@@ -385,6 +394,7 @@ def tool_propose_cleanup_plan(
                 is_safe=safe,
                 cleanup_command=cmd,
                 is_protected=is_prot,
+                contents_only=contents_only,
             )
         )
 

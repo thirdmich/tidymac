@@ -40,6 +40,36 @@ def _offer_drive_eject(backup_dir: Path | None, console: Console) -> None:
 
 
 
+def _folder_contents(folder: Path) -> list[Path]:
+    """Immediate children of a folder; empty if it can't be read."""
+    try:
+        return sorted(folder.iterdir())
+    except OSError:
+        return []
+
+
+def _plan_outcome(
+    approved: bool,
+    removed_count: int = 0,
+    failed_count: int = 0,
+    freed_bytes: int = 0,
+    commands_succeeded: int = 0,
+    commands_failed: int = 0,
+    note: str = "",
+) -> dict[str, Any]:
+    """What a cleanup plan actually did, reported back to the model verbatim."""
+    return {
+        "approved": approved,
+        "removed_count": removed_count,
+        "failed_count": failed_count,
+        "freed_bytes": freed_bytes,
+        "freed_human": format_size(freed_bytes),
+        "commands_succeeded": commands_succeeded,
+        "commands_failed": commands_failed,
+        "note": note,
+    }
+
+
 class TidyCopilot:
     """Intelligent autonomous disk optimization agent."""
 
@@ -65,8 +95,12 @@ class TidyCopilot:
             ChatMessage(role="system", content=SYSTEM_PROMPT)
         ]
 
-    def _render_plan(self, plan_data: dict[str, Any]) -> bool:
-        """Render a proposed cleanup plan in a Rich table and prompt user for confirmation."""
+    def _render_plan(self, plan_data: dict[str, Any]) -> dict[str, Any]:
+        """Render a proposed cleanup plan, ask for confirmation, and run it if approved.
+
+        Returns what actually happened, so the model reports real results rather
+        than assuming an approved plan succeeded.
+        """
         title = escape(str(plan_data.get("title", "Proposed Cleanup Plan")))
         items = plan_data.get("items", [])
         total_human = plan_data.get("total_human", "0 B")
@@ -91,6 +125,8 @@ class TidyCopilot:
             target = item.get("path") or item.get("cleanup_command") or "N/A"
             # Shorten home path for display
             display_target = str(target).replace(str(Path.home()), "~")
+            if item.get("contents_only"):
+                display_target += "/* (contents)"
             sz = item.get("size_human", "0 B")
 
             if item.get("is_protected"):
@@ -102,6 +138,8 @@ class TidyCopilot:
                 total_executable_bytes += item.get("size_bytes", 0)
                 if item.get("cleanup_command"):
                     cleanup_cmds.append(item["cleanup_command"])
+                elif item.get("contents_only"):
+                    deletable_paths.extend(_folder_contents(Path(item["path"])))
                 elif item.get("path"):
                     deletable_paths.append(Path(item["path"]))
 
@@ -118,7 +156,7 @@ class TidyCopilot:
 
         if not deletable_paths and not cleanup_cmds:
             self.console.print("[dim]No actionable items found in this plan.[/dim]\n")
-            return False
+            return _plan_outcome(approved=False, note="Nothing in the plan was actionable.")
 
         dest_label = "external backup drive" if self.use_backup else "System Trash / Recycle Bin"
         self.console.print(f"\n[bold]Target destination:[/bold] [cyan]{dest_label}[/cyan]")
@@ -126,7 +164,7 @@ class TidyCopilot:
 
         if not Confirm.ask("Proceed with this cleanup plan?", default=False):
             self.console.print("[dim]Cleanup plan cancelled by user. No files were touched.[/dim]\n")
-            return False
+            return _plan_outcome(approved=False, note="User declined. Do not propose the same plan again.")
 
         # Execute approved plan
         backup_dir = None
@@ -138,25 +176,47 @@ class TidyCopilot:
         self.console.print("\n[bold cyan]Executing cleanup...[/bold cyan]")
 
         # 1. Run package manager clean commands
+        commands_ok = 0
         for cmd in cleanup_cmds:
             self.console.print(f"  [cyan]Running:[/cyan] {cmd}")
-            run_cleanup_command(cmd, console=self.console)
+            if run_cleanup_command(cmd, console=self.console):
+                commands_ok += 1
 
         # 2. Delete / Backup files
+        count, freed = 0, 0
         if deletable_paths:
             count, freed = remove_files(
                 deletable_paths,
                 backup_dir=backup_dir,
                 console=self.console,
             )
-            self.console.print(
-                f"\n[bold green]Success![/bold green] Cleaned {count} items, freed {format_size(freed)}.\n"
-            )
+        failed = len(deletable_paths) - count
+        style = "bold green" if failed == 0 and count else "bold yellow" if count else "bold red"
+        self.console.print(
+            f"\n[{style}]Removed {count} of {len(deletable_paths)} item(s), "
+            f"{format_size(freed)}.[/{style}]"
+            + (f" [red]{failed} failed.[/red]" if failed else "")
+        )
+        if count and not backup_dir:
+            self.console.print("[dim]Items are in the Trash; the space is freed when you empty it.[/dim]")
+        self.console.print()
 
         if backup_dir:
             _offer_drive_eject(backup_dir, self.console)
 
-        return True
+        return _plan_outcome(
+            approved=True,
+            removed_count=count,
+            failed_count=failed,
+            freed_bytes=freed,
+            commands_succeeded=commands_ok,
+            commands_failed=len(cleanup_cmds) - commands_ok,
+            note=(
+                "Items were moved to the Trash; disk space is reclaimed only when the Trash is emptied."
+                if count and not backup_dir
+                else ""
+            ),
+        )
 
     def run_turn(self, user_input: str) -> str:
         """Run a single conversational turn with multi-step tool execution."""
@@ -200,8 +260,7 @@ class TidyCopilot:
 
                 # Special interactive handling for proposed plans
                 if tc.name == "propose_cleanup_plan":
-                    executed = self._render_plan(tool_result)
-                    tool_result["user_approved_and_executed"] = executed
+                    tool_result["execution_result"] = self._render_plan(tool_result)
 
                 # Feed tool result back to agent
                 self.conversation_history.append(
